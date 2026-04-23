@@ -1,0 +1,34 @@
+# ---- Gradle ----
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# ---- Kotlin / JVM build outputs ----
+out/
+bin/
+*.class
+
+# ---- IntelliJ IDEA ----
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# ---- VS Code ----
+.vscode/
+
+# ---- Claude Code (local assistant settings) ----
+.claude/
+
+# ---- macOS ----
+.DS_Store
+
+# ---- Logs & temp ----
+*.log
+*.tmp
+*.bak
+*.swp
+
+# ---- Misc ----
+Thumbs.db
