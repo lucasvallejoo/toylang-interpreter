@@ -1,14 +1,20 @@
 package io.github.lucasvallejoo.toylang
 
+import io.github.lucasvallejoo.toylang.lexer.Lexer
+import io.github.lucasvallejoo.toylang.lexer.LexerException
+import kotlin.system.exitProcess
+
 /**
  * Entry point of the Toylang interpreter.
  *
- * Reads a complete source program from standard input, executes it, and prints
- * the value of every top-level variable to standard output, one per line.
+ * Reads a complete source program from standard input, runs it through the
+ * lexer, and prints the resulting token stream to standard output. Parsing
+ * and evaluation will be layered on top in the coming phases; until then
+ * this command acts as a "tokens viewer", which is useful for debugging the
+ * sample programs against the lexer.
  *
- * The full pipeline (lexer -> parser -> interpreter) will be wired up in the
- * upcoming commits. For now this is a skeleton that only reads stdin so we can
- * verify the build and the end-to-end I/O plumbing work as expected.
+ * Diagnostic messages (errors, notices) are written to standard error, so
+ * standard output stays clean and machine-friendly.
  */
 fun main() {
     val source = System.`in`.bufferedReader().readText()
@@ -18,7 +24,13 @@ fun main() {
         return
     }
 
-    // TODO(phase-1): tokenize -> parse -> evaluate -> print variables
-    System.err.println("toylang: read ${source.length} characters from stdin")
-    System.err.println("toylang: interpretation not implemented yet")
+    try {
+        val tokens = Lexer(source).tokenize()
+        for (token in tokens) {
+            println(token)
+        }
+    } catch (e: LexerException) {
+        System.err.println("toylang: ${e.message}")
+        exitProcess(1)
+    }
 }
