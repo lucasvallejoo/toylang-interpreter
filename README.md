@@ -2,7 +2,7 @@
 
 A tree-walking interpreter for a small imperative language, written in Kotlin.
 
-> **Status:** lexer and parser implemented; evaluator coming next. This README grows alongside the implementation — every non-trivial design decision is recorded here as it is made.
+> **Status:** complete — lexer, parser, and evaluator all implemented and tested.
 
 ---
 
@@ -31,7 +31,14 @@ y = (x + 2) * 2" | ./gradlew run -q
 
 *(The `-q` flag silences Gradle's own logging so only the interpreter's output reaches the terminal.)*
 
-At this stage of the project, `run` prints the **abstract syntax tree** produced by the parser, rendered as s-expressions. Evaluation will replace that output once the evaluator is wired up.
+The interpreter prints the final value of every top-level variable, one per line, in the order in which they were first assigned:
+
+```
+x = 2
+y = 8
+```
+
+If the program contains a runtime error (division by zero, undefined variable, type mismatch, etc.) the interpreter writes a diagnostic to **standard error** and exits with a non-zero status, so the standard output stays clean.
 
 ## Project layout
 
@@ -47,11 +54,13 @@ At this stage of the project, `run` prints the **abstract syntax tree** produced
 │       │       ├── Main.kt      # CLI entry point
 │       │       ├── lexer/       # Tokenizer
 │       │       ├── ast/         # AST nodes + pretty-printer
-│       │       └── parser/      # Recursive-descent parser
+│       │       ├── parser/      # Recursive-descent parser
+│       │       └── runtime/     # Evaluator, environment, runtime values
 │       └── test/kotlin/
 │           └── io/github/lucasvallejoo/toylang/
 │               ├── lexer/       # Lexer tests
-│               └── parser/      # Parser tests
+│               ├── parser/      # Parser tests
+│               └── runtime/     # Evaluator tests
 ├── examples/                    # Sample programs (to be added)
 ├── LICENSE
 └── README.md
@@ -59,7 +68,7 @@ At this stage of the project, `run` prints the **abstract syntax tree** produced
 
 ## The language
 
-An informal tour of what Toylang currently accepts. A formal grammar follows in the next section.
+An informal tour of what Toylang accepts. A formal grammar follows in the next section.
 
 **Values and variables.** Integers (`42`) and floating-point numbers (`3.14`) are both numeric literals. The two keywords `true` and `false` form the boolean type. Variables are introduced and reassigned with `=`.
 
@@ -132,9 +141,9 @@ The interpreter is a classic three-stage pipeline:
     source text
         │
         ▼
-    ┌─────────┐  tokens  ┌────────┐  AST   ┌─────────────┐  values
-    │  Lexer  ├─────────▶│ Parser ├───────▶│ Interpreter ├──────────▶ stdout
-    └─────────┘          └────────┘        └─────────────┘
+    ┌─────────┐  tokens  ┌────────┐  AST   ┌───────────┐  values
+    │  Lexer  ├─────────▶│ Parser ├───────▶│ Evaluator ├──────────▶ stdout
+    └─────────┘          └────────┘        └───────────┘
 ```
 
 Each stage lives in its own sub-package so that the code shape mirrors the conceptual shape of the problem.
@@ -177,7 +186,15 @@ A hand-written recursive-descent parser with **precedence climbing** for express
 
 On a grammar error, the parser raises a `ParserException` carrying the exact line and column of the offending token and a message of the shape *"Expected X, found Y"*. No error recovery is attempted — in an MVP interpreter, the first error is the one that matters.
 
-Evaluator will be documented here as it lands.
+### Evaluator (`toylang.runtime`)
+
+A **tree-walking interpreter**: it recurses over the AST produced by the parser and computes values directly, with no compilation or bytecode generation step. The runtime sub-package contains three supporting classes:
+
+- **`Value`** — a sealed hierarchy of runtime values: `LongVal`, `DoubleVal`, `BoolVal`, `FunVal`.
+- **`Environment`** — storage for variables (a `LinkedHashMap` at the top level to preserve insertion order, plus a stack of local frames for function calls) and for function declarations (a separate map, since the two namespaces are independent).
+- **`EvaluationException`** — mirrors `LexerException` and `ParserException`; carries a message and a source position for clean CLI diagnostics.
+
+The evaluator itself (`Evaluator`) exposes a single public method: `run(program)`, which returns the `Environment` when execution finishes. The `Main.kt` entry point then iterates over `environment.topLevelVariables()` to print the final state.
 
 ## Design decisions
 
@@ -191,7 +208,7 @@ The sample programs don't use any, but a language without comments is unusual, a
 
 #### Numeric types: integers and doubles
 
-The task only shows integer literals, but supporting `Double` is a small, natural extension that signals a deliberate take on the type system. A literal without a `.` is a `Long`; a literal with a `.` followed by at least one digit is a `Double`. The interpreter (phase 3) will apply standard numeric promotion: if either operand is a `Double`, the result is a `Double`; otherwise both are `Long` and the result stays `Long`. That mirrors what Java and Kotlin do and removes surprises.
+The task only shows integer literals, but supporting `Double` is a small, natural extension that signals a deliberate take on the type system. A literal without a `.` is a `Long`; a literal with a `.` followed by at least one digit is a `Double`. The interpreter applies standard numeric promotion: if either operand is a `Double`, the result is a `Double`; otherwise both are `Long` and the result stays `Long`. That mirrors what Java and Kotlin do and removes surprises.
 
 Leading dots (`.5`) are rejected on purpose — every number must have at least one digit before the dot. That matches Java and Go, and it leaves room for a future method-call syntax (`1.abs()`) without ambiguity.
 
@@ -245,11 +262,41 @@ The expected output `x=3, y=11` is only reachable if the trailing `, x = x + 1` 
 
 #### Comparison chains parse but do not carry a meaning
 
-`a < b < c` parses as `(a < b) < c` (left-associative, same as the other comparison operators). The parser does not reject it; the evaluator may or may not, depending on the runtime types involved. This is consistent with C/Java (where `a < b < c` silently means `(a<b) < c` with a boolean-int comparison on the right) and keeps the grammar regular. Documenting the trap here is cheaper than introducing a special rule.
+`a < b < c` parses as `(a < b) < c` (left-associative, same as the other comparison operators). The parser does not reject it; the evaluator will raise a type error at runtime when the left side evaluates to a boolean and `<` demands a number. Documenting the trap here is cheaper than introducing a special rule.
 
 #### `not` sits below comparison in the precedence table
 
 `not a == b` parses as `not (a == b)`, matching Python and Kotlin. Arithmetic unary `-` is kept tight (so that `-2 * 3` is `(-2) * 3`), but `not` being a keyword makes it read naturally as a predicate modifier rather than as a bit flip. Placing it just below the comparison level captures that intuition.
+
+### Evaluator
+
+#### Two-pass execution for forward references
+
+`run(program)` makes two passes: first it registers every top-level `fun` declaration, then it executes the remaining statements. This lets a function call another declared further down in the file — the expected behaviour in virtually every language — without requiring any lookahead in the parser or a separate linking step.
+
+#### Integer division is preserved; numeric promotion is opt-in
+
+If both operands of an arithmetic operation are `Long`, the result is `Long`: `7 / 2` yields `3`. Promotion to `Double` only happens when at least one operand is already a `Double` (`7.0 / 2` yields `3.5`). This mirrors Java, Kotlin, and C, and avoids the surprise where a stray float literal somewhere in the program silently changes the type of every computation around it.
+
+#### Short-circuit evaluation for `and` and `or`
+
+`false and expr` never evaluates `expr`; `true or expr` never evaluates `expr`. Both operators still require a boolean on each side — there is no truthy/falsy coercion. Short-circuit matters in practice: `x != 0 and 10 / x > 1` is safe even when `x` is zero.
+
+#### Cross-type equality is well-defined, not an error
+
+`1 == 1.0` is `true` (numeric comparison after promotion). `1 == true` is `false` — not a runtime error. Mixing a number with a boolean can never be equal, but it is also not worth aborting the program over. This policy avoids a common pitfall in strictly-typed languages where simple guards like `if result == false` fail to compile after a refactor changes the type of `result`.
+
+#### `return` is implemented as a control-flow exception (`ReturnSignal`)
+
+A `return` statement throws a private `ReturnSignal` exception that is caught exactly at the call site in `evalCall`. This lets `return` unwind from any depth of nesting — inside an `if`, inside a `while`, anywhere — without threading a flag through every level of the recursive walk. The stack trace is suppressed because filling it on every `return` would be pure overhead with no diagnostic value.
+
+#### Every function must return a value; there is no `void`
+
+If execution reaches the end of a function body without hitting a `return`, the evaluator raises a runtime error. Toylang has no `unit` or `void` type — every call must produce a value. This is strict, but it makes the language's semantics uniform: an expression involving a function call always has a type, and you never have to wonder whether a call site will silently produce `null`.
+
+#### Python-like scoping: functions read globals, writes create locals
+
+Inside a function body, reading a variable that is not local falls back to the global scope. Writing always targets the local frame, even if a global with the same name exists. This is Python's default scoping rule without `global` / `nonlocal`: it is simple to explain and sufficient for every pattern in the brief's sample programs.
 
 ## Beyond the brief
 
@@ -257,9 +304,10 @@ Features that are not strictly required but felt natural enough for a real inter
 
 - **Floating-point literals.** The brief only shows integers; doubles cost almost nothing extra and make the numeric story complete.
 - **Line comments.** Not strictly required, but unnatural to omit in a language that anyone would actually try to use.
-- **Line/column tracking on every token and AST node.** Enables meaningful error messages at every stage — now, for the lexer and parser, and automatically in the future for the evaluator.
+- **Line/column tracking on every token, AST node, and runtime error.** Enables meaningful error messages at every stage.
 - **Logical operators (`and`, `or`, `not`).** The samples don't use them but any non-trivial program soon does.
-- **S-expression pretty-printer for the AST.** Turns the parse tree into a readable Lisp-style dump, which is invaluable both for debugging and for showing how precedence actually nests.
+- **S-expression pretty-printer for the AST.** Turns the parse tree into a readable Lisp-style dump, which is invaluable for debugging and for showing how precedence actually nests.
+- **Short-circuit evaluation.** Not required by any sample program, but essential for safe guard expressions like `x != 0 and 10 / x > 1`.
 
 Further stretch goals — REPL mode, a `--debug` flag that dumps the AST, caret-based error presentation, a suite of runnable example programs — are captured in *Limitations and future work* and will be picked up as time allows.
 
@@ -271,18 +319,18 @@ Unit tests live under `app/src/test/kotlin` and run with:
 ./gradlew test
 ```
 
-Two suites cover the implemented phases:
+Three suites cover all three implemented phases:
 
 - **`LexerTest`** exercises literals (including the integer/double split), identifiers, keywords, operators (both single- and two-character forms), comments, whitespace handling, error cases, and smoke tests against real programs from the brief.
-- **`ParserTest`** covers operator precedence at every level (arithmetic, comparison, logical, unary), associativity, statement forms (assignment, if/else, while, return, function declaration, call, bare expression), error cases (missing `then`, missing `else`, unclosed parens, nested functions, chained assignment), and the three brief samples that most stress the grammar (sample 1, sample 3 with the tricky trailing update, sample 6 with recursion).
+- **`ParserTest`** covers operator precedence at every level (arithmetic, comparison, logical, unary), associativity, statement forms (assignment, if/else, while, return, function declaration, call, bare expression), error cases (missing `then`, missing `else`, unclosed parens, nested functions, chained assignment), and the three brief samples that most stress the grammar.
+- **`EvaluatorTest`** covers arithmetic (integer vs. float promotion, division truncation, modulo, operator precedence), boolean logic (short-circuit, strict type checks), control flow (if/else, while, nested loops), scoping (globals readable but not writable from functions), recursion, all eight runtime error cases (undefined variable, undefined function, arity mismatch, division by zero, type errors, missing return), and end-to-end execution of all six programs from the brief.
 
 ## Limitations and future work
 
-- **Evaluator.** Not yet implemented. Currently `./gradlew run` prints the parse tree rather than executing the program.
 - **No REPL.** The interpreter reads a single program from stdin and exits. An interactive mode would be a nice-to-have.
 - **Plain-text error messages.** A caret-based visual formatter would be a much nicer experience and is already enabled by the position information the lexer records.
 - **Old-Mac line endings.** CRLF (`\r\n`) works fine because the `\n` resets line counters, but a file using bare `\r` as the line terminator would keep counting on the same line. Not a realistic scenario today, but worth flagging.
-- **Comparison chains.** `a < b < c` parses but has no well-defined meaning. The evaluator will either flag it or give it a quietly surprising result; it is up to that phase to make a decision.
+- **Comparison chains.** `a < b < c` parses as `(a < b) < c`. The right-hand comparison will receive a boolean from the left-hand result and raise a type error at runtime. This is a reasonable outcome but not a friendly diagnostic; a dedicated "chained comparison" error message would be clearer.
 - **No error recovery in the parser.** The first grammar error aborts parsing. This is adequate for an MVP but a production-grade interpreter would attempt to continue after the first error to report multiple issues at once.
 
 ## License
