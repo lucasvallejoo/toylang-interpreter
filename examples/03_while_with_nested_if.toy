@@ -1,0 +1,9 @@
+// Brief sample 3 - a while whose body is a single simple statement (an if),
+// plus a trailing update separated by a comma. The comma binds to the while
+// body, not to the else branch -- see the "body_seq" grammar rule.
+// Expected output:
+//   x = 5
+//   y = 13
+x = 0
+y = 0
+while x < 5 do if x == 1 then y = 10 else y = y + 1, x = x + 1

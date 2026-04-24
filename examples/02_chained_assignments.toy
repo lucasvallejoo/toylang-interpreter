@@ -1,0 +1,8 @@
+// Brief sample 2 - a chain of assignments where each depends on the previous.
+// Expected output:
+//   a = 10
+//   b = 7
+//   c = 14
+a = 10
+b = a - 3
+c = b * 2

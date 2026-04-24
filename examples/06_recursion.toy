@@ -1,0 +1,7 @@
+// Brief sample 6 - classic recursive factorial.
+// Expected output:
+//   y = 720
+fun fact_rec(n) {
+  if n == 1 then return 1 else return n * fact_rec(n - 1)
+}
+y = fact_rec(6)

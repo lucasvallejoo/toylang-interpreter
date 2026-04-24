@@ -1,0 +1,6 @@
+// Brief sample 4 - a top-level if/else that picks between two assignments.
+// Expected output:
+//   x = 7
+//   y = 1
+x = 7
+if x > 5 then y = 1 else y = 0

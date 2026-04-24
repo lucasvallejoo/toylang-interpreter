@@ -1,0 +1,5 @@
+// Brief sample 5 - a two-parameter function and a call site.
+// Expected output:
+//   r = 7
+fun add(a, b) { return a + b }
+r = add(3, 4)

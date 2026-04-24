@@ -1,0 +1,6 @@
+// Minimal greeter used in the README quick-start.
+// Expected output:
+//   x = 2
+//   y = 8
+x = 2
+y = (x + 2) * 2

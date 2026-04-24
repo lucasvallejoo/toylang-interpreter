@@ -38,7 +38,21 @@ x = 2
 y = 8
 ```
 
-If the program contains a runtime error (division by zero, undefined variable, type mismatch, etc.) the interpreter writes a diagnostic to **standard error** and exits with a non-zero status, so the standard output stays clean.
+If the program contains a runtime error (division by zero, undefined variable, type mismatch, etc.) the interpreter writes a diagnostic to **standard error** and exits with a non-zero status, so the standard output stays clean. Diagnostics include a caret pointing at the offending character:
+
+```
+toylang: undefined variable 'y'
+  at line 3, column 5
+
+    x = y + 1
+        ^
+```
+
+To inspect the parse tree without running the program, pass `--debug`:
+```bash
+./gradlew run -q --args="--debug" < examples/06_recursion.toy
+```
+The AST is dumped (as s-expressions) to standard error before execution; standard output stays clean, so redirecting `>` still captures only the program's final state.
 
 ## Project layout
 
@@ -61,7 +75,7 @@ If the program contains a runtime error (division by zero, undefined variable, t
 │               ├── lexer/       # Lexer tests
 │               ├── parser/      # Parser tests
 │               └── runtime/     # Evaluator tests
-├── examples/                    # Sample programs (to be added)
+├── examples/                    # Runnable sample programs (every brief sample + a hello)
 ├── LICENSE
 └── README.md
 ```
@@ -308,8 +322,11 @@ Features that are not strictly required but felt natural enough for a real inter
 - **Logical operators (`and`, `or`, `not`).** The samples don't use them but any non-trivial program soon does.
 - **S-expression pretty-printer for the AST.** Turns the parse tree into a readable Lisp-style dump, which is invaluable for debugging and for showing how precedence actually nests.
 - **Short-circuit evaluation.** Not required by any sample program, but essential for safe guard expressions like `x != 0 and 10 / x > 1`.
+- **Caret-under-the-line error messages.** Every diagnostic — lexer, parser, or runtime — is rendered with the offending source line and a `^` under the exact column, in the style of modern compilers.
+- **`--debug` CLI flag.** Dumps the AST as s-expressions to standard error before execution, so the three phases of the pipeline are individually inspectable without opening the source.
+- **Runnable examples directory.** Every program from the brief is available as a standalone `.toy` file under `examples/`, with an expected-output comment at the top. Handy for smoke-testing after a change.
 
-Further stretch goals — REPL mode, a `--debug` flag that dumps the AST, caret-based error presentation, a suite of runnable example programs — are captured in *Limitations and future work* and will be picked up as time allows.
+A REPL and a positional file argument are still on the wishlist; they are listed in *Limitations and future work*.
 
 ## Testing
 
@@ -328,7 +345,6 @@ Three suites cover all three implemented phases:
 ## Limitations and future work
 
 - **No REPL.** The interpreter reads a single program from stdin and exits. An interactive mode would be a nice-to-have.
-- **Plain-text error messages.** A caret-based visual formatter would be a much nicer experience and is already enabled by the position information the lexer records.
 - **Old-Mac line endings.** CRLF (`\r\n`) works fine because the `\n` resets line counters, but a file using bare `\r` as the line terminator would keep counting on the same line. Not a realistic scenario today, but worth flagging.
 - **Comparison chains.** `a < b < c` parses as `(a < b) < c`. The right-hand comparison will receive a boolean from the left-hand result and raise a type error at runtime. This is a reasonable outcome but not a friendly diagnostic; a dedicated "chained comparison" error message would be clearer.
 - **No error recovery in the parser.** The first grammar error aborts parsing. This is adequate for an MVP but a production-grade interpreter would attempt to continue after the first error to report multiple issues at once.

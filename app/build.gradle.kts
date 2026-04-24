@@ -30,4 +30,6 @@ application {
 
 tasks.named<JavaExec>("run") {
     standardInput = System.`in`
+    standardOutput = System.out
+    errorOutput = System.err
 }
