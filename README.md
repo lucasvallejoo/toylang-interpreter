@@ -18,18 +18,21 @@ This README is meant to be read linearly, like a short technical story: the ambi
 
 **Requirements:** JDK 21 or newer. The Gradle wrapper bundled in the repository will take care of Gradle and — if needed — of downloading a compatible JDK.
 
-Run a program from a file:
-```bash
-./gradlew run -q < examples/hello.toy
-```
+The interpreter has three modes:
 
-Or pipe the source directly:
 ```bash
+# Run a program from a file (most common)
+./gradlew run -q --args="examples/hello.toy"
+
+# Or pipe source through stdin
 echo "x = 2
 y = (x + 2) * 2" | ./gradlew run -q
+
+# Drop into the interactive REPL
+./gradlew run -q --args="--repl"
 ```
 
-*(The `-q` flag silences Gradle's own logging so only the interpreter's output reaches the terminal.)*
+*(The `-q` flag silences Gradle's own logging; `--args=` is Gradle's way of forwarding arguments to the program. Run `--args="--help"` for the full usage banner.)*
 
 The interpreter prints the final value of every top-level variable, one per line, in the order in which they were first assigned:
 
@@ -38,11 +41,11 @@ x = 2
 y = 8
 ```
 
-If the program contains a runtime error (division by zero, undefined variable, type mismatch, etc.) the interpreter writes a diagnostic to **standard error** and exits with a non-zero status, so the standard output stays clean. Diagnostics include a caret pointing at the offending character:
+If the program contains a runtime error (division by zero, undefined variable, type mismatch, etc.) the interpreter writes a diagnostic to **standard error** and exits with a non-zero status, so the standard output stays clean. Diagnostics include a caret pointing at the offending character; when running from a file, the location uses the editor-friendly `path:line:col` format:
 
 ```
 toylang: undefined variable 'y'
-  at line 3, column 5
+  at examples/buggy.toy:3:5
 
     x = y + 1
         ^
@@ -50,7 +53,7 @@ toylang: undefined variable 'y'
 
 To inspect the parse tree without running the program, pass `--debug`:
 ```bash
-./gradlew run -q --args="--debug" < examples/06_recursion.toy
+./gradlew run -q --args="--debug examples/06_recursion.toy"
 ```
 The AST is dumped (as s-expressions) to standard error before execution; standard output stays clean, so redirecting `>` still captures only the program's final state.
 
@@ -353,6 +356,20 @@ Toylang has no `void` / `unit`, so every call must produce a value. `print` retu
 
 `2 ** 10` is `1024` (Long); `2 ** -1` is `0.5` (Double). Whenever both operands are Long *and* the exponent is non-negative we stay in integer arithmetic via repeated squaring (`O(log e)` multiplications) — using `Math.pow` instead would silently lose precision past `2^53`. Negative exponents and any Double operand promote to Double and use `Math.pow`, since there is no way to honestly express `2 ** -1` as a Long.
 
+### CLI and REPL
+
+#### REPL multi-line via "found EOF", not bracket counting
+
+Inside the REPL, every line is appended to a buffer and the cumulative buffer is sent through the lexer and parser. When the parser fails with a message containing `"found EOF"`, the input is treated as incomplete and the prompt switches to `... ` so the user can finish typing on the next line. This works for any partial syntax — open paren, open brace, dangling operator — *because the parser already knows when it has run out of input*. The alternative (manually counting brackets in the REPL) would duplicate logic that already exists in `Parser.expect`. Re-using its diagnostic instead of reimplementing the rule is what makes the multi-line behaviour transparent.
+
+#### CLI exit codes follow Unix conventions
+
+`0` for success (or `--help`), `1` for program errors (lexer / parser / runtime / I/O), `2` for usage errors (unknown flag, conflicting flags, too many file arguments). The split lets shell scripts react differently to "your program is broken" versus "you typed the command wrong". `--help` writes to standard output (it is requested information, not an error), every other diagnostic writes to standard error (so redirecting `>` keeps the captured output clean even when something goes wrong).
+
+#### Diagnostics carry the filename when one is known
+
+When the source comes from a file, errors are formatted as `at path/to/file.toy:line:col` — the convention recognised by IDEs and editors so jumping to the location is one click. When the source comes from stdin or the REPL there is no file to mention, so the diagnostic falls back to `at line N, column M`.
+
 ## Beyond the brief
 
 Features that are not strictly required but felt natural enough for a real interpreter to include from the start:
@@ -369,8 +386,8 @@ Features that are not strictly required but felt natural enough for a real inter
 - **String literals.** Double-quoted, with the canonical escapes `\n \t \" \\`. Concatenation via `+` (only when both sides are strings — no implicit coercion).
 - **`print` built-in.** A single first-class side-effect function that lets programs emit output during execution. Multi-arg, space-separated, newline-terminated; user-defined functions of the same name shadow it transparently.
 - **Power operator (`**`).** Right-associative, with Python's asymmetric precedence around unary `-`. Stays in integer arithmetic when honest; promotes to `Double` only when negative exponents or non-integer operands force it.
-
-A REPL and a positional file argument are still on the wishlist; they are listed in *Limitations and future work*.
+- **Interactive REPL (`--repl`).** A read-eval-print loop with persistent state, multi-line buffering (driven by the parser's "found EOF" signal — no manual brace-counting), and meta-commands `:q` to quit and `:dump` to list every bound variable.
+- **File argument (`--args="path/to/program.toy"`).** Programs can be invoked by path instead of stdin redirection; diagnostics use the editor-friendly `file:line:col` format so an IDE jumps straight to the offending location.
 
 ## Testing
 
@@ -388,8 +405,6 @@ Three suites cover all three implemented phases:
 
 ## Limitations and future work
 
-- **No REPL.** The interpreter reads a single program from stdin and exits. An interactive mode would be a nice-to-have.
-- **No positional file argument.** Programs are read from stdin (`./gradlew run -q < file.toy`); a `./gradlew run -q --args="file.toy"` form would be friendlier on Windows where `<` redirection is awkward.
 - **Old-Mac line endings.** CRLF (`\r\n`) works fine because the `\n` resets line counters, but a file using bare `\r` as the line terminator would keep counting on the same line. Not a realistic scenario today, but worth flagging.
 - **Comparison chains.** `a < b < c` parses as `(a < b) < c`. The right-hand comparison will receive a boolean from the left-hand result and raise a type error at runtime. This is a reasonable outcome but not a friendly diagnostic; a dedicated "chained comparison" error message would be clearer.
 - **No error recovery in the parser.** The first grammar error aborts parsing. This is adequate for an MVP but a production-grade interpreter would attempt to continue after the first error to report multiple issues at once.

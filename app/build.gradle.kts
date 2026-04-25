@@ -32,4 +32,9 @@ tasks.named<JavaExec>("run") {
     standardInput = System.`in`
     standardOutput = System.out
     errorOutput = System.err
+    // Run from the project root so file arguments like "examples/foo.toy"
+    // resolve against the same directory the user typed the command in.
+    // The default would use the `app/` subproject dir, which surprises
+    // users who do not know Gradle's multi-project layout.
+    workingDir = rootProject.projectDir
 }
