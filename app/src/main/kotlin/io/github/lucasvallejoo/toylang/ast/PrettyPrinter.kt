@@ -60,9 +60,33 @@ fun Stmt.sexpr(indent: Int = 0): String {
 fun Expr.sexpr(): String = when (this) {
     is NumberLit -> value.toString()
     is BoolLit -> value.toString()
+    is StringLit -> value.toToylangLiteral()
     is VarRef -> name
     is Binary -> "(${op.symbol} ${left.sexpr()} ${right.sexpr()})"
     is Unary -> "(${op.symbol} ${operand.sexpr()})"
     is Call -> if (args.isEmpty()) "($callee)"
               else "($callee ${args.joinToString(" ") { it.sexpr() }})"
+}
+
+/**
+ * Render a Kotlin [String] back into its Toylang source-literal form,
+ * with surrounding double quotes and the same set of escape sequences
+ * the lexer accepts. Used both by the AST pretty-printer and by the
+ * runtime's [io.github.lucasvallejoo.toylang.runtime.StringVal] when
+ * top-level variables are dumped at the end of execution, so the user
+ * sees a literal that they could paste back into a program.
+ */
+internal fun String.toToylangLiteral(): String {
+    val sb = StringBuilder("\"")
+    for (c in this) {
+        when (c) {
+            '"' -> sb.append("\\\"")
+            '\\' -> sb.append("\\\\")
+            '\n' -> sb.append("\\n")
+            '\t' -> sb.append("\\t")
+            else -> sb.append(c)
+        }
+    }
+    sb.append('"')
+    return sb.toString()
 }

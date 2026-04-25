@@ -29,6 +29,8 @@ import io.github.lucasvallejoo.toylang.lexer.TokenType.RETURN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.RPAREN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.SLASH
 import io.github.lucasvallejoo.toylang.lexer.TokenType.STAR
+import io.github.lucasvallejoo.toylang.lexer.TokenType.STAR_STAR
+import io.github.lucasvallejoo.toylang.lexer.TokenType.STRING
 import io.github.lucasvallejoo.toylang.lexer.TokenType.THEN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.TRUE
 import io.github.lucasvallejoo.toylang.lexer.TokenType.WHILE
@@ -48,6 +50,10 @@ import io.github.lucasvallejoo.toylang.lexer.TokenType.WHILE
  *    one or more digits turns them into a [Double]. Leading dots (`.5`) are
  *    rejected on purpose: every number must have at least one digit before
  *    the dot. This matches how Java and Go lex number literals.
+ *  - **Strings.** Double-quoted (`"..."`) with the escape sequences `\n`,
+ *    `\t`, `\"`, `\\`. Raw newlines inside a string are rejected so a
+ *    forgotten closing quote produces a clean "unterminated string" error
+ *    instead of swallowing half the program.
  *  - **Identifiers and keywords.** An identifier starts with a letter or
  *    underscore and continues with letters, digits or underscores. Once an
  *    identifier has been read, it is looked up in a keyword table: if it
@@ -142,7 +148,7 @@ class Lexer(private val source: String) {
             ',' -> addToken(COMMA)
             '+' -> addToken(PLUS)
             '-' -> addToken(MINUS)
-            '*' -> addToken(STAR)
+            '*' -> addToken(if (match('*')) STAR_STAR else STAR)
             '%' -> addToken(PERCENT)
 
             // One- or two-character operators: greedy match on the second char
@@ -154,6 +160,10 @@ class Lexer(private val source: String) {
             // '/' is either the division operator or the start of a comment.
             // We resolve it by looking at the next character.
             '/' -> if (match('/')) skipLineComment() else addToken(SLASH)
+
+            // String literal: read until the matching '"', honouring a small
+            // set of escapes. The opening quote has already been consumed.
+            '"' -> scanString()
 
             // Whitespace -- no token emitted. advance() already moved line/column.
             ' ', '\t', '\r', '\n' -> { /* ignore */ }
@@ -188,6 +198,50 @@ class Lexer(private val source: String) {
         val text = source.substring(start, current)
         val value: Any = if (isDouble) text.toDouble() else text.toLong()
         addToken(NUMBER, literal = value)
+    }
+
+    /**
+     * Read a string literal starting just after the opening `"`. Builds the
+     * decoded value (i.e., escapes are resolved into the characters they
+     * stand for) and emits a [STRING] token whose [Token.literal] is the
+     * decoded [String]. Raw newlines inside the literal are rejected: in
+     * practice they always indicate a forgotten closing quote, and erroring
+     * eagerly gives a much sharper diagnostic than swallowing arbitrary
+     * source until the next `"` shows up many lines later.
+     */
+    private fun scanString() {
+        val sb = StringBuilder()
+        while (!isAtEnd() && peek() != '"') {
+            val c = peek()
+            if (c == '\n') error("Unterminated string literal")
+            if (c == '\\') {
+                // Capture the position of the backslash so the diagnostic for
+                // an invalid escape points at the offending escape, not at
+                // the start of the literal.
+                val escLine = line
+                val escColumn = column
+                advance() // consume '\\'
+                if (isAtEnd()) error("Unterminated string literal")
+                val esc = advance()
+                when (esc) {
+                    'n' -> sb.append('\n')
+                    't' -> sb.append('\t')
+                    '"' -> sb.append('"')
+                    '\\' -> sb.append('\\')
+                    else -> throw LexerException(
+                        "Invalid escape sequence '\\$esc'",
+                        escLine,
+                        escColumn,
+                    )
+                }
+            } else {
+                advance()
+                sb.append(c)
+            }
+        }
+        if (isAtEnd()) error("Unterminated string literal")
+        advance() // consume the closing '"'
+        addToken(STRING, literal = sb.toString())
     }
 
     /**

@@ -27,6 +27,8 @@ import io.github.lucasvallejoo.toylang.lexer.TokenType.RBRACE
 import io.github.lucasvallejoo.toylang.lexer.TokenType.RETURN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.RPAREN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.STAR
+import io.github.lucasvallejoo.toylang.lexer.TokenType.STAR_STAR
+import io.github.lucasvallejoo.toylang.lexer.TokenType.STRING
 import io.github.lucasvallejoo.toylang.lexer.TokenType.THEN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.TRUE
 import io.github.lucasvallejoo.toylang.lexer.TokenType.WHILE
@@ -84,6 +86,53 @@ class LexerTest {
         assertThrows<LexerException> { tokenize("1.x") }
     }
 
+    // -------------------- String literals --------------------
+
+    @Test
+    fun `simple string literal carries the decoded value`() {
+        val tokens = tokenize("\"hello\"")
+        assertEquals(STRING, tokens[0].type)
+        assertEquals("hello", tokens[0].literal)
+    }
+
+    @Test
+    fun `empty string is a valid token`() {
+        val tokens = tokenize("\"\"")
+        assertEquals(STRING, tokens[0].type)
+        assertEquals("", tokens[0].literal)
+    }
+
+    @Test
+    fun `escape sequences are decoded by the lexer`() {
+        // The literal source is `"a\nb\tc\"d\\e"`. The decoded value should
+        // contain real newline / tab / quote / backslash characters.
+        val tokens = tokenize("\"a\\nb\\tc\\\"d\\\\e\"")
+        assertEquals(STRING, tokens[0].type)
+        assertEquals("a\nb\tc\"d\\e", tokens[0].literal)
+    }
+
+    @Test
+    fun `unterminated string raises LexerException at the opening quote`() {
+        val e = assertThrows<LexerException> { tokenize("x = \"never closed") }
+        assertEquals(1, e.line)
+        assertEquals(5, e.column)
+    }
+
+    @Test
+    fun `raw newline inside a string is treated as unterminated`() {
+        // A forgotten closing quote is the most likely cause; eager error
+        // beats silently swallowing the rest of the program.
+        assertThrows<LexerException> { tokenize("\"oops\nstill going\"") }
+    }
+
+    @Test
+    fun `invalid escape raises LexerException pointing at the backslash`() {
+        val e = assertThrows<LexerException> { tokenize("x = \"bad \\q escape\"") }
+        // The escape \q starts at column 10 of line 1.
+        assertEquals(1, e.line)
+        assertEquals(10, e.column)
+    }
+
     @Test
     fun `boolean literals produce TRUE and FALSE with boolean literals`() {
         val tokens = tokenize("true false")
@@ -136,6 +185,26 @@ class LexerTest {
             listOf(NUMBER, PLUS, NUMBER, MINUS, NUMBER, STAR, NUMBER, EOF),
             types("1 + 2 - 3 * 4"),
         )
+    }
+
+    @Test
+    fun `double-star tokenises as STAR_STAR, single-star as STAR`() {
+        assertEquals(
+            listOf(NUMBER, STAR_STAR, NUMBER, STAR, NUMBER, EOF),
+            types("2 ** 3 * 4"),
+        )
+    }
+
+    @Test
+    fun `triple-star greedily takes a STAR_STAR plus a STAR`() {
+        // `***` is read left-to-right: `**` first, then `*`. The parser
+        // will reject the resulting sequence, but the lexer's job is
+        // only to split it correctly.
+        val tokens = tokenize("a***b")
+        assertEquals(IDENTIFIER, tokens[0].type)
+        assertEquals(STAR_STAR, tokens[1].type)
+        assertEquals(STAR, tokens[2].type)
+        assertEquals(IDENTIFIER, tokens[3].type)
     }
 
     @Test

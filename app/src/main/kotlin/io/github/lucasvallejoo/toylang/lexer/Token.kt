@@ -5,7 +5,7 @@ package io.github.lucasvallejoo.toylang.lexer
  *
  * Tokens are grouped into five conceptual sections:
  *
- *  - Literals:    [NUMBER], [IDENTIFIER], [TRUE], [FALSE]
+ *  - Literals:    [NUMBER], [STRING], [IDENTIFIER], [TRUE], [FALSE]
  *  - Keywords:    [IF], [THEN], [ELSE], [WHILE], [DO], [FUN], [RETURN]
  *  - Operators:   arithmetic ([PLUS]..[PERCENT]),
  *                 comparison ([EQ_EQ]..[GT_EQ]),
@@ -15,13 +15,13 @@ package io.github.lucasvallejoo.toylang.lexer
  */
 enum class TokenType {
     // ---- Literals ----
-    NUMBER, IDENTIFIER, TRUE, FALSE,
+    NUMBER, STRING, IDENTIFIER, TRUE, FALSE,
 
     // ---- Keywords ----
     IF, THEN, ELSE, WHILE, DO, FUN, RETURN,
 
     // ---- Arithmetic operators ----
-    PLUS, MINUS, STAR, SLASH, PERCENT,
+    PLUS, MINUS, STAR, STAR_STAR, SLASH, PERCENT,
 
     // ---- Comparison operators ----
     EQ_EQ, BANG_EQ, LT, GT, LT_EQ, GT_EQ,
@@ -44,6 +44,7 @@ enum class TokenType {
  *                   Preserved for error messages and debugging.
  * @property literal the value carried by literal tokens:
  *                    - [NUMBER]     -> [Long] or [Double]
+ *                    - [STRING]     -> [String] (the decoded value, escapes resolved)
  *                    - [TRUE]/[FALSE] -> [Boolean]
  *                    - [IDENTIFIER] -> [String] (the identifier name)
  *                    - every other token -> `null`

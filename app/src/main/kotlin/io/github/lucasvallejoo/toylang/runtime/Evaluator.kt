@@ -13,6 +13,7 @@ import io.github.lucasvallejoo.toylang.ast.NumberLit
 import io.github.lucasvallejoo.toylang.ast.Program
 import io.github.lucasvallejoo.toylang.ast.Return
 import io.github.lucasvallejoo.toylang.ast.Stmt
+import io.github.lucasvallejoo.toylang.ast.StringLit
 import io.github.lucasvallejoo.toylang.ast.Unary
 import io.github.lucasvallejoo.toylang.ast.UnaryOp
 import io.github.lucasvallejoo.toylang.ast.VarRef
@@ -28,6 +29,12 @@ import io.github.lucasvallejoo.toylang.ast.While
  *
  *  1. Every top-level `fun` declaration is registered.
  *  2. The remaining top-level statements are executed in order.
+ *
+ * Calls are resolved **user-first, built-ins second**: a `fun print(x)`
+ * declaration in the program transparently shadows the language's own
+ * `print` because the lookup tries the environment before falling back
+ * to the built-in registry. This keeps shadowing predictable -- if the
+ * name is yours in the source, it is yours at runtime too.
  *
  * When evaluation can no longer continue -- an undefined name, a type
  * mismatch, a division by zero -- the evaluator raises an
@@ -89,6 +96,7 @@ class Evaluator {
             )
         }
         is BoolLit -> BoolVal(expr.value)
+        is StringLit -> StringVal(expr.value)
         is VarRef -> environment.getVariable(expr.name)
             ?: throw EvaluationException("undefined variable '${expr.name}'", expr.line, expr.column)
         is Unary -> evalUnary(expr)
@@ -129,10 +137,62 @@ class Evaluator {
             BinaryOp.EQ -> BoolVal(valuesEqual(left, right))
             BinaryOp.NEQ -> BoolVal(!valuesEqual(left, right))
             BinaryOp.LT, BinaryOp.LE, BinaryOp.GT, BinaryOp.GE -> evalComparison(expr.op, left, right, expr)
-            BinaryOp.PLUS, BinaryOp.MINUS, BinaryOp.TIMES,
+            // `+` is overloaded: numeric addition for numbers, concatenation
+            // when both sides are strings. Mixing string and number falls
+            // through to evalArithmetic, which produces a clear "expected a
+            // number, got string" error -- intentional, no implicit coercion.
+            BinaryOp.PLUS -> if (left is StringVal && right is StringVal) {
+                StringVal(left.value + right.value)
+            } else {
+                evalArithmetic(expr.op, left, right, expr)
+            }
+            BinaryOp.MINUS, BinaryOp.TIMES,
             BinaryOp.DIV, BinaryOp.MOD -> evalArithmetic(expr.op, left, right, expr)
+            BinaryOp.POW -> evalPower(left, right, expr)
             BinaryOp.AND, BinaryOp.OR -> error("unreachable: short-circuit handled above")
         }
+    }
+
+    /**
+     * Exponentiation. The result type follows the same rule as the rest
+     * of the arithmetic, with one extra wrinkle: a *negative* exponent
+     * always promotes to [Double], even if both operands are [Long]. This
+     * is the only way to express `2 ** -1 = 0.5` honestly -- promoting
+     * eagerly is preferable to silently truncating to `0`.
+     *
+     * Integer exponentiation is computed in a fast-doubling loop instead
+     * of via `Math.pow`, so small integer powers stay fully precise even
+     * for large bases (where `Math.pow`'s `Double` would already lose
+     * precision in the upper Long range).
+     */
+    private fun evalPower(left: Value, right: Value, expr: Binary): Value {
+        requireNumeric(left, expr.left)
+        requireNumeric(right, expr.right)
+
+        if (left is LongVal && right is LongVal && right.value >= 0) {
+            return LongVal(intPow(left.value, right.value))
+        }
+        val a = toDouble(left)
+        val b = toDouble(right)
+        return DoubleVal(Math.pow(a, b))
+    }
+
+    /**
+     * Repeated-squaring integer power: O(log exp) multiplications. The
+     * caller guarantees `exp >= 0`. Overflow wraps (Kotlin's default for
+     * `Long *`); flagging it would require an explicit overflow check on
+     * every multiplication and is intentionally left out of the MVP.
+     */
+    private fun intPow(base: Long, exp: Long): Long {
+        var result = 1L
+        var b = base
+        var e = exp
+        while (e > 0) {
+            if (e and 1L == 1L) result *= b
+            b *= b
+            e = e shr 1
+        }
+        return result
     }
 
     private fun evalArithmetic(op: BinaryOp, left: Value, right: Value, expr: Binary): Value {
@@ -202,18 +262,27 @@ class Evaluator {
         left is LongVal && right is DoubleVal -> left.value.toDouble() == right.value
         left is DoubleVal && right is LongVal -> left.value == right.value.toDouble()
         left is BoolVal && right is BoolVal -> left.value == right.value
-        // Mixing booleans and numbers (or anything involving a function) is
-        // never equal -- not an error: `1 == true` just yields `false`.
+        left is StringVal && right is StringVal -> left.value == right.value
+        // Mixing categories (string vs number, bool vs anything else, etc.)
+        // is never equal -- not an error: `1 == true` and `"1" == 1` both
+        // yield `false`. This keeps `==` total over every pair of values.
         else -> false
     }
 
     private fun evalCall(expr: Call): Value {
+        // User-defined first; built-ins are a fallback for unknown names.
         val fn = environment.getFunction(expr.callee)
-            ?: throw EvaluationException(
-                "undefined function '${expr.callee}'",
-                expr.line, expr.column,
-            )
-        val decl = fn.decl
+        if (fn != null) return callUserFunction(expr, fn.decl)
+
+        invokeBuiltin(expr)?.let { return it }
+
+        throw EvaluationException(
+            "undefined function '${expr.callee}'",
+            expr.line, expr.column,
+        )
+    }
+
+    private fun callUserFunction(expr: Call, decl: FunDecl): Value {
         if (expr.args.size != decl.params.size) {
             throw EvaluationException(
                 "function '${decl.name}' expects ${decl.params.size} argument(s), got ${expr.args.size}",
@@ -246,6 +315,38 @@ class Evaluator {
         }
     }
 
+    /**
+     * Dispatch table for built-in functions. Returns the result of the
+     * call, or `null` if [expr] does not target a known built-in -- the
+     * caller treats that as "unknown function".
+     *
+     * The list is intentionally tiny: anything more elaborate (`len`,
+     * `str`, etc.) belongs in a follow-up. Each built-in is responsible
+     * for evaluating its own arguments because the rules vary -- `print`
+     * accepts any arity, while a hypothetical `len` would insist on one.
+     */
+    private fun invokeBuiltin(expr: Call): Value? = when (expr.callee) {
+        "print" -> invokePrint(expr)
+        else -> null
+    }
+
+    /**
+     * The `print` built-in. Accepts any number of arguments, evaluates
+     * them in the caller's scope, and writes them to standard output
+     * separated by spaces and followed by a newline.
+     *
+     * Strings are emitted via [Value.asText] (no surrounding quotes), so
+     * `print("hello")` produces `hello`. Numbers and booleans use their
+     * normal display form. The return value is `LongVal(0)` so the call
+     * is also legal in expression position; in practice callers use it
+     * as a bare statement and discard the result.
+     */
+    private fun invokePrint(expr: Call): Value {
+        val rendered = expr.args.joinToString(" ") { eval(it).asText() }
+        println(rendered)
+        return LongVal(0)
+    }
+
     // -------- Helpers --------
 
     private fun asBool(value: Value, node: Expr): Boolean = when (value) {
@@ -269,6 +370,7 @@ class Evaluator {
         is LongVal -> "int"
         is DoubleVal -> "float"
         is BoolVal -> "bool"
+        is StringVal -> "string"
         is FunVal -> "function"
     }
 

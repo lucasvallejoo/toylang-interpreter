@@ -19,6 +19,7 @@ enum class BinaryOp(val symbol: String) {
     TIMES("*"),
     DIV("/"),
     MOD("%"),
+    POW("**"),
 }
 
 /**
@@ -58,6 +59,17 @@ data class NumberLit(
 /** A boolean literal produced by the keywords `true` or `false`. */
 data class BoolLit(
     val value: Boolean,
+    override val line: Int,
+    override val column: Int,
+) : Expr()
+
+/**
+ * A string literal. [value] is the *decoded* string -- escapes such as
+ * `\n` have already been resolved by the lexer, so the runtime sees only
+ * the characters the user actually wanted in the value.
+ */
+data class StringLit(
+    val value: String,
     override val line: Int,
     override val column: Int,
 ) : Expr()

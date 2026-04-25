@@ -84,15 +84,16 @@ The AST is dumped (as s-expressions) to standard error before execution; standar
 
 An informal tour of what Toylang accepts. A formal grammar follows in the next section.
 
-**Values and variables.** Integers (`42`) and floating-point numbers (`3.14`) are both numeric literals. The two keywords `true` and `false` form the boolean type. Variables are introduced and reassigned with `=`.
+**Values and variables.** Integers (`42`) and floating-point numbers (`3.14`) are both numeric literals. The two keywords `true` and `false` form the boolean type. Strings are double-quoted (`"hello"`) and support the escape sequences `\n`, `\t`, `\"`, `\\`. Variables are introduced and reassigned with `=`.
 
 ```
 x = 2
 pi = 3.14
 flag = true
+greeting = "hello"
 ```
 
-**Arithmetic, comparison and logic.** The usual set of operators is available: `+`, `-`, `*`, `/`, `%` for arithmetic; `==`, `!=`, `<`, `<=`, `>`, `>=` for comparison; and the keyword-based `and`, `or`, `not` for logic.
+**Arithmetic, comparison and logic.** The usual set of operators is available: `+`, `-`, `*`, `/`, `%`, `**` for arithmetic (the last is exponentiation, right-associative); `==`, `!=`, `<`, `<=`, `>`, `>=` for comparison; and the keyword-based `and`, `or`, `not` for logic. The `+` operator is overloaded for strings: when both sides are strings, it concatenates.
 
 **Control flow.** Branching uses `if cond then ... else ...`; loops use `while cond do ...`.
 
@@ -107,9 +108,17 @@ while x < 3 do x = x + 1
 fun fact(n) { if n <= 0 then return 1 else return n * fact(n - 1) }
 ```
 
+**Built-in `print`.** A single built-in function emits a line to standard output during execution. It accepts any number of arguments and joins them with spaces; strings are written without their surrounding quotes:
+
+```
+print("the answer is", 6 * 7)   // -> the answer is 42
+```
+
+A user-defined `fun print` shadows the built-in for the rest of the program, so the name is never reserved at the language level.
+
 **Comments.** Line comments start with `//` and run to the end of the line.
 
-**Output.** When a program finishes, the interpreter prints every top-level variable with its final value, one per line, in the order in which the variables were first defined. Function names and function-local variables are not printed.
+**Output.** When a program finishes, the interpreter prints every top-level variable with its final value, one per line, in the order in which the variables were first defined. Function names and function-local variables are not printed. Strings appear in quoted form (`s = "hello"`) so they cannot be confused with identifiers.
 
 ## Grammar
 
@@ -139,10 +148,11 @@ equality     = comparison { ( "==" | "!=" ) comparison } ;
 comparison   = term       { ( "<" | "<=" | ">" | ">=" ) term } ;
 term         = factor     { ( "+" | "-" ) factor } ;
 factor       = unary      { ( "*" | "/" | "%" ) unary } ;
-unary        = "-" unary | call ;
+unary        = "-" unary | power ;
+power        = call [ "**" unary ] ;       (* right-assoc; right side re-enters unary *)
 call         = IDENT "(" [ arg_list ] ")" | primary ;
 arg_list     = expression { "," expression } ;
-primary      = NUMBER | BOOL | IDENT | "(" expression ")" ;
+primary      = NUMBER | STRING | BOOL | IDENT | "(" expression ")" ;
 ```
 
 Top-level statements are *not* separated by any explicit token — the parser uses greedy parsing to find their boundaries. Inside a `while ... do` body or a `fun ... { }` body, statements are separated by commas, which matches the syntax used in sample 3 of the brief.
@@ -175,7 +185,7 @@ A single-pass, hand-written scanner that turns the raw source into a flat list o
 
 The output of the parser is a tree of sealed Kotlin classes split along the usual line:
 
-- **`Expr`** — `NumberLit`, `BoolLit`, `VarRef`, `Binary`, `Unary`, `Call`. Operators are enums (`BinaryOp`, `UnaryOp`) so that the parser cannot accidentally emit an unknown operator symbol.
+- **`Expr`** — `NumberLit`, `BoolLit`, `StringLit`, `VarRef`, `Binary`, `Unary`, `Call`. Operators are enums (`BinaryOp`, `UnaryOp`) so that the parser cannot accidentally emit an unknown operator symbol.
 - **`Stmt`** — `Assignment`, `If`, `While`, `Return`, `FunDecl`, `ExprStmt`.
 - **`Program`** — a thin wrapper around `List<Stmt>`.
 
@@ -195,8 +205,9 @@ A hand-written recursive-descent parser with **precedence climbing** for express
 | 6     | `+` `-`                         | left          |
 | 7     | `*` `/` `%`                     | left          |
 | 8     | unary `-`                       | right         |
-| 9     | function call                   | n/a           |
-| 10    | literals, identifiers, grouping | n/a           |
+| 9     | `**`                            | right         |
+| 10    | function call                   | n/a           |
+| 11    | literals, identifiers, grouping | n/a           |
 
 On a grammar error, the parser raises a `ParserException` carrying the exact line and column of the offending token and a message of the shape *"Expected X, found Y"*. No error recovery is attempted — in an MVP interpreter, the first error is the one that matters.
 
@@ -204,11 +215,11 @@ On a grammar error, the parser raises a `ParserException` carrying the exact lin
 
 A **tree-walking interpreter**: it recurses over the AST produced by the parser and computes values directly, with no compilation or bytecode generation step. The runtime sub-package contains three supporting classes:
 
-- **`Value`** — a sealed hierarchy of runtime values: `LongVal`, `DoubleVal`, `BoolVal`, `FunVal`.
+- **`Value`** — a sealed hierarchy of runtime values: `LongVal`, `DoubleVal`, `BoolVal`, `StringVal`, `FunVal`. Each value renders itself two ways: `display()` for the end-of-program top-level dump (strings are quoted) and `asText()` for the `print` built-in (strings are bare).
 - **`Environment`** — storage for variables (a `LinkedHashMap` at the top level to preserve insertion order, plus a stack of local frames for function calls) and for function declarations (a separate map, since the two namespaces are independent).
 - **`EvaluationException`** — mirrors `LexerException` and `ParserException`; carries a message and a source position for clean CLI diagnostics.
 
-The evaluator itself (`Evaluator`) exposes a single public method: `run(program)`, which returns the `Environment` when execution finishes. The `Main.kt` entry point then iterates over `environment.topLevelVariables()` to print the final state.
+The evaluator itself (`Evaluator`) exposes a single public method: `run(program)`, which returns the `Environment` when execution finishes. The `Main.kt` entry point then iterates over `environment.topLevelVariables()` to print the final state. Function calls are resolved **user-first, built-ins second**: a `fun print(...)` declaration in the source transparently shadows the language's own `print`.
 
 ## Design decisions
 
@@ -312,6 +323,36 @@ If execution reaches the end of a function body without hitting a `return`, the 
 
 Inside a function body, reading a variable that is not local falls back to the global scope. Writing always targets the local frame, even if a global with the same name exists. This is Python's default scoping rule without `global` / `nonlocal`: it is simple to explain and sufficient for every pattern in the brief's sample programs.
 
+### Strings, `print`, and power
+
+#### String concatenation, no implicit coercion
+
+`"a" + "b"` is `"ab"`; `"a" + 1` is a runtime type error, **not** `"a1"`. Implicit coercion in `+` is one of the most common silent-bug sources in dynamically-typed languages (`"" + obj` accidentally calling `toString` on the wrong thing); requiring an explicit conversion costs little and removes that whole class of mistakes. When a `str()` built-in lands, the conversion will be visible in the source.
+
+#### Strings are quoted in the top-level dump but bare in `print`
+
+A top-level variable holding `"hello"` shows up as `s = "hello"` in the final dump, with quotes and re-escaped specials. The `print` built-in, on the other hand, emits the bare characters: `print("hello")` outputs `hello`. This is the same split Python makes between `repr()` and `str()`, exposed via two methods on `Value`: `display()` (used by the dump) and `asText()` (used by `print`). The two contracts are different and deserve different methods.
+
+#### Raw newlines inside a string literal are rejected
+
+Multi-line literals are deliberately not supported. The far more common case is a forgotten closing quote, and erroring at the first newline produces a clean *"unterminated string"* diagnostic instead of swallowing arbitrary source until the next `"` shows up many lines later. Newline characters are still expressible via the `\n` escape, so nothing is actually lost.
+
+#### Built-ins are resolved as a fallback after user functions
+
+`evalCall` looks up the user environment first; only on a miss does it consult a small built-in registry (currently just `print`). The order is the predictable one — what is yours in the source is yours at runtime — and it makes shadowing work transparently: `fun print(x) { ... }` simply takes precedence, no special syntax needed.
+
+#### `print` returns `0`, accepts arity zero
+
+Toylang has no `void` / `unit`, so every call must produce a value. `print` returns `LongVal(0)` by convention, matching C's `printf`; in practice almost every call discards the result by using `print` as a bare statement. Arity is unrestricted: `print()` emits just a newline, `print(a, b, c)` writes them space-separated.
+
+#### Power: `**` chosen over `^`, with Python's asymmetric precedence
+
+`^` reads as XOR even in languages that don't have XOR — too much false intuition. `**` is unambiguous and follows the lineage of Python and Ruby. The operator is right-associative (`2 ** 3 ** 2 == 512`) and tighter than unary `-` on the left but looser on the right: `-2 ** 2` is `-(2 ** 2) = -4`, while `2 ** -3` is `2 ** (-3) = 0.125`. The asymmetry is implemented by having the right operand re-enter `parseUnary`; it matches Python and is what most people intuit when they see `**`.
+
+#### Integer power stays integer when honest, falls back to `Double`
+
+`2 ** 10` is `1024` (Long); `2 ** -1` is `0.5` (Double). Whenever both operands are Long *and* the exponent is non-negative we stay in integer arithmetic via repeated squaring (`O(log e)` multiplications) — using `Math.pow` instead would silently lose precision past `2^53`. Negative exponents and any Double operand promote to Double and use `Math.pow`, since there is no way to honestly express `2 ** -1` as a Long.
+
 ## Beyond the brief
 
 Features that are not strictly required but felt natural enough for a real interpreter to include from the start:
@@ -325,6 +366,9 @@ Features that are not strictly required but felt natural enough for a real inter
 - **Caret-under-the-line error messages.** Every diagnostic — lexer, parser, or runtime — is rendered with the offending source line and a `^` under the exact column, in the style of modern compilers.
 - **`--debug` CLI flag.** Dumps the AST as s-expressions to standard error before execution, so the three phases of the pipeline are individually inspectable without opening the source.
 - **Runnable examples directory.** Every program from the brief is available as a standalone `.toy` file under `examples/`, with an expected-output comment at the top. Handy for smoke-testing after a change.
+- **String literals.** Double-quoted, with the canonical escapes `\n \t \" \\`. Concatenation via `+` (only when both sides are strings — no implicit coercion).
+- **`print` built-in.** A single first-class side-effect function that lets programs emit output during execution. Multi-arg, space-separated, newline-terminated; user-defined functions of the same name shadow it transparently.
+- **Power operator (`**`).** Right-associative, with Python's asymmetric precedence around unary `-`. Stays in integer arithmetic when honest; promotes to `Double` only when negative exponents or non-integer operands force it.
 
 A REPL and a positional file argument are still on the wishlist; they are listed in *Limitations and future work*.
 
@@ -338,16 +382,21 @@ Unit tests live under `app/src/test/kotlin` and run with:
 
 Three suites cover all three implemented phases:
 
-- **`LexerTest`** exercises literals (including the integer/double split), identifiers, keywords, operators (both single- and two-character forms), comments, whitespace handling, error cases, and smoke tests against real programs from the brief.
-- **`ParserTest`** covers operator precedence at every level (arithmetic, comparison, logical, unary), associativity, statement forms (assignment, if/else, while, return, function declaration, call, bare expression), error cases (missing `then`, missing `else`, unclosed parens, nested functions, chained assignment), and the three brief samples that most stress the grammar.
-- **`EvaluatorTest`** covers arithmetic (integer vs. float promotion, division truncation, modulo, operator precedence), boolean logic (short-circuit, strict type checks), control flow (if/else, while, nested loops), scoping (globals readable but not writable from functions), recursion, all eight runtime error cases (undefined variable, undefined function, arity mismatch, division by zero, type errors, missing return), and end-to-end execution of all six programs from the brief.
+- **`LexerTest`** exercises literals (the integer/double split, string escapes, unterminated strings, invalid escapes), identifiers, keywords, operators (single- and two-character forms, including `**`), comments, whitespace handling, error cases, and smoke tests against real programs from the brief.
+- **`ParserTest`** covers operator precedence at every level (arithmetic, comparison, logical, unary, power with its right-associativity and Python-style asymmetry around unary `-`), associativity, statement forms (assignment, if/else, while, return, function declaration, call, bare expression), string literals (concat, equality, expression-statement), error cases (missing `then`, missing `else`, unclosed parens, nested functions, chained assignment), and the three brief samples that most stress the grammar.
+- **`EvaluatorTest`** covers arithmetic (integer vs. float promotion, division truncation, modulo, operator precedence, integer and Double power), boolean logic (short-circuit, strict type checks), control flow (if/else, while, nested loops), scoping (globals readable but not writable from functions), recursion, strings (concatenation, equality, cross-type comparisons, type errors, display vs. `asText` rendering), the `print` built-in (multi-arg, no-arg, mixed types, user-shadowing, integration with loops and functions), every documented runtime error case, and end-to-end execution of all six programs from the brief.
 
 ## Limitations and future work
 
 - **No REPL.** The interpreter reads a single program from stdin and exits. An interactive mode would be a nice-to-have.
+- **No positional file argument.** Programs are read from stdin (`./gradlew run -q < file.toy`); a `./gradlew run -q --args="file.toy"` form would be friendlier on Windows where `<` redirection is awkward.
 - **Old-Mac line endings.** CRLF (`\r\n`) works fine because the `\n` resets line counters, but a file using bare `\r` as the line terminator would keep counting on the same line. Not a realistic scenario today, but worth flagging.
 - **Comparison chains.** `a < b < c` parses as `(a < b) < c`. The right-hand comparison will receive a boolean from the left-hand result and raise a type error at runtime. This is a reasonable outcome but not a friendly diagnostic; a dedicated "chained comparison" error message would be clearer.
 - **No error recovery in the parser.** The first grammar error aborts parsing. This is adequate for an MVP but a production-grade interpreter would attempt to continue after the first error to report multiple issues at once.
+- **Strings cannot be ordered.** `==` and `!=` work on strings, but `<`, `<=`, `>`, `>=` reject them. Lexicographic comparison would be a small extension; left out because no sample uses it.
+- **No multi-line strings.** A raw newline inside a literal is treated as an unterminated-string error. Adding a triple-quoted form (`"""..."""`) would be the natural escape hatch.
+- **No string interpolation, no `str()` built-in.** Mixing strings with numbers in `+` raises a type error. Until an explicit conversion is exposed, programs must build output manually with `print(label, number)` instead of `print("count = " + n)`.
+- **Power overflow wraps silently.** `2 ** 63` produces `Long.MIN_VALUE` rather than a runtime error. Detecting overflow on every multiplication is a small cost that would be reasonable to add.
 
 ## License
 

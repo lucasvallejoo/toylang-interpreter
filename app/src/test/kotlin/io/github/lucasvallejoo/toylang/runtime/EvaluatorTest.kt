@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import java.io.ByteArrayOutputStream
+import java.io.PrintStream
 
 class EvaluatorTest {
 
@@ -23,6 +25,28 @@ class EvaluatorTest {
 
     private fun boolVar(env: Environment, name: String): Boolean =
         (env.getVariable(name) as BoolVal).value
+
+    private fun stringVar(env: Environment, name: String): String =
+        (env.getVariable(name) as StringVal).value
+
+    /**
+     * Run [block] with stdout temporarily redirected to a buffer, and
+     * return whatever was written. Used to assert against the side
+     * effects of the `print` built-in. JUnit Jupiter executes tests
+     * sequentially by default, so swapping `System.out` is safe.
+     */
+    private fun captureStdout(block: () -> Unit): String {
+        val buf = ByteArrayOutputStream()
+        val original = System.out
+        System.setOut(PrintStream(buf))
+        try {
+            block()
+        } finally {
+            System.out.flush()
+            System.setOut(original)
+        }
+        return buf.toString()
+    }
 
     // -------------------- Literals and simple assignment --------------------
 
@@ -95,6 +119,52 @@ class EvaluatorTest {
     fun `operator precedence matches math conventions`() {
         val env = run("x = 2 + 3 * 4")
         assertEquals(14L, longVar(env, "x"))
+    }
+
+    @Test
+    fun `integer power keeps a Long result`() {
+        val env = run("x = 2 ** 10")
+        assertEquals(1024L, longVar(env, "x"))
+    }
+
+    @Test
+    fun `power with a non-negative Long exponent stays in integer arithmetic`() {
+        val env = run("x = 3 ** 0\ny = 5 ** 1")
+        assertEquals(1L, longVar(env, "x"))
+        assertEquals(5L, longVar(env, "y"))
+    }
+
+    @Test
+    fun `power with a negative exponent promotes to Double`() {
+        // 2 ** -1 cannot honestly be a Long, so we promote.
+        val env = run("x = 2 ** -1")
+        assertEquals(0.5, doubleVar(env, "x"), 0.0)
+    }
+
+    @Test
+    fun `power with a Double base produces a Double`() {
+        val env = run("x = 2.0 ** 3")
+        assertEquals(8.0, doubleVar(env, "x"), 0.0)
+    }
+
+    @Test
+    fun `power is right-associative at runtime`() {
+        // 2 ** 3 ** 2  =  2 ** 9  =  512
+        val env = run("x = 2 ** 3 ** 2")
+        assertEquals(512L, longVar(env, "x"))
+    }
+
+    @Test
+    fun `power binds tighter than unary minus at runtime`() {
+        // -2 ** 2  =  -(2 ** 2)  =  -4
+        val env = run("x = -2 ** 2")
+        assertEquals(-4L, longVar(env, "x"))
+    }
+
+    @Test
+    fun `power on a string is a type error`() {
+        val e = assertThrows<EvaluationException> { run("x = \"hi\" ** 2") }
+        assertTrue(e.message!!.contains("number"))
     }
 
     @Test
@@ -280,6 +350,166 @@ class EvaluatorTest {
         """.trimIndent()
         val e = assertThrows<EvaluationException> { run(source) }
         assertTrue(e.message!!.contains("without returning"))
+    }
+
+    // -------------------- Strings --------------------
+
+    @Test
+    fun `string literal is stored as a StringVal with the decoded value`() {
+        val env = run("s = \"hello\"")
+        assertEquals("hello", stringVar(env, "s"))
+    }
+
+    @Test
+    fun `escaped string literal stores real characters, not source escapes`() {
+        val env = run("s = \"line1\\nline2\\ttabbed\"")
+        assertEquals("line1\nline2\ttabbed", stringVar(env, "s"))
+    }
+
+    @Test
+    fun `string concatenation with + produces a new string`() {
+        val env = run("s = \"foo\" + \"bar\"")
+        assertEquals("foobar", stringVar(env, "s"))
+    }
+
+    @Test
+    fun `string equality compares character by character`() {
+        val env = run(
+            """
+            a = "abc" == "abc"
+            b = "abc" == "abd"
+            c = "abc" != "abd"
+            """.trimIndent()
+        )
+        assertTrue(boolVar(env, "a"))
+        assertTrue(!boolVar(env, "b"))
+        assertTrue(boolVar(env, "c"))
+    }
+
+    @Test
+    fun `string compared to a non-string is never equal but not an error`() {
+        val env = run(
+            """
+            a = "1" == 1
+            b = "true" == true
+            """.trimIndent()
+        )
+        assertTrue(!boolVar(env, "a"))
+        assertTrue(!boolVar(env, "b"))
+    }
+
+    @Test
+    fun `adding a string to a number is a type error`() {
+        // No implicit coercion: the user must convert explicitly. Until we
+        // expose a `str()` built-in, mixing produces a clear error.
+        val e = assertThrows<EvaluationException> { run("s = \"hi\" + 1") }
+        assertTrue(e.message!!.contains("number") || e.message!!.contains("string"))
+    }
+
+    @Test
+    fun `arithmetic operators other than plus reject strings`() {
+        val e = assertThrows<EvaluationException> { run("s = \"a\" * 3") }
+        assertTrue(e.message!!.contains("number"))
+    }
+
+    @Test
+    fun `display form of a top-level string variable is quoted`() {
+        // The end-user contract: at the end of the program, a string variable
+        // is printed in source-literal form so it cannot be confused with an
+        // identifier. Re-escaping internal special characters is part of
+        // that contract.
+        val env = run("s = \"he said \\\"hi\\\"\"")
+        val display = (env.getVariable("s") as StringVal).display()
+        assertEquals("\"he said \\\"hi\\\"\"", display)
+    }
+
+    // -------------------- print built-in --------------------
+
+    @Test
+    fun `print writes a string argument without quotes`() {
+        val out = captureStdout { run("print(\"hello\")") }
+        assertEquals("hello\n", out)
+    }
+
+    @Test
+    fun `print writes a number argument in display form`() {
+        val out = captureStdout { run("print(42)") }
+        assertEquals("42\n", out)
+    }
+
+    @Test
+    fun `print joins multiple arguments with single spaces`() {
+        val out = captureStdout { run("print(\"x =\", 1, true)") }
+        assertEquals("x = 1 true\n", out)
+    }
+
+    @Test
+    fun `print with no arguments emits just a newline`() {
+        val out = captureStdout { run("print()") }
+        assertEquals("\n", out)
+    }
+
+    @Test
+    fun `print evaluates its arguments in the caller's scope`() {
+        // Verifies that `n` resolves to the global, not to anything else.
+        val out = captureStdout {
+            run(
+                """
+                n = 7
+                print("n is", n + 1)
+                """.trimIndent()
+            )
+        }
+        assertEquals("n is 8\n", out)
+    }
+
+    @Test
+    fun `print returns LongVal(0) so it is legal in expression position`() {
+        // Capture and discard stdout; we only care about the assignment.
+        val env = captureStdoutEnv("r = print(\"hi\")")
+        assertEquals(0L, longVar(env, "r"))
+    }
+
+    @Test
+    fun `user-defined print shadows the built-in`() {
+        // If the user declares their own `print`, calls resolve to it
+        // before the built-in is even consulted -- the built-in is only
+        // a fallback for unknown names.
+        val env = run(
+            """
+            fun print(x) { return x + 1 }
+            y = print(41)
+            """.trimIndent()
+        )
+        assertEquals(42L, longVar(env, "y"))
+    }
+
+    @Test
+    fun `print works inside a loop and a function body`() {
+        // Function and while bodies separate statements with commas, not
+        // newlines -- same rule we locked down in phase 2.
+        val out = captureStdout {
+            run(
+                """
+                fun greet(name) { print("hi", name), return 0 }
+                i = 0
+                while i < 3 do greet("user"), i = i + 1
+                """.trimIndent()
+            )
+        }
+        assertEquals("hi user\nhi user\nhi user\n", out)
+    }
+
+    /**
+     * Variant of [run] used by tests that both capture stdout and inspect
+     * the resulting environment. Returns the [Environment]; the captured
+     * output is silently discarded, matching the use case of `r = print(...)`
+     * where we only care about `r`.
+     */
+    private fun captureStdoutEnv(source: String): Environment {
+        var env: Environment? = null
+        captureStdout { env = run(source) }
+        return env!!
     }
 
     // -------------------- Brief samples (end-to-end) --------------------

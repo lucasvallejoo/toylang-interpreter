@@ -12,6 +12,7 @@ import io.github.lucasvallejoo.toylang.ast.If
 import io.github.lucasvallejoo.toylang.ast.NumberLit
 import io.github.lucasvallejoo.toylang.ast.Program
 import io.github.lucasvallejoo.toylang.ast.Return
+import io.github.lucasvallejoo.toylang.ast.StringLit
 import io.github.lucasvallejoo.toylang.ast.Unary
 import io.github.lucasvallejoo.toylang.ast.UnaryOp
 import io.github.lucasvallejoo.toylang.ast.VarRef
@@ -58,6 +59,41 @@ class ParserTest {
         assertEquals("z", (program.statements[2] as Assignment).name)
     }
 
+    // -------------------- String literals --------------------
+
+    @Test
+    fun `string literal parses to a StringLit node`() {
+        val e = parseAssignmentValue("\"hello\"") as StringLit
+        assertEquals("hello", e.value)
+    }
+
+    @Test
+    fun `string concatenation produces a Binary PLUS over StringLits`() {
+        val e = parseAssignmentValue("\"a\" + \"b\"") as Binary
+        assertEquals(BinaryOp.PLUS, e.op)
+        assertEquals("a", (e.left as StringLit).value)
+        assertEquals("b", (e.right as StringLit).value)
+    }
+
+    @Test
+    fun `string equality produces a Binary EQ`() {
+        val e = parseAssignmentValue("\"x\" == \"y\"") as Binary
+        assertEquals(BinaryOp.EQ, e.op)
+        assertEquals("x", (e.left as StringLit).value)
+        assertEquals("y", (e.right as StringLit).value)
+    }
+
+    @Test
+    fun `bare string is a valid expression-statement`() {
+        // A bare string at the top level is grammatically a valid (if useless)
+        // expression statement, just like a bare number. The lexer test covers
+        // that the STRING token is emitted; this confirms the parser admits it
+        // wherever a simple statement is expected.
+        val program = parse("\"hi\"")
+        val stmt = program.statements.single() as ExprStmt
+        assertEquals("hi", (stmt.expr as StringLit).value)
+    }
+
     // -------------------- Arithmetic precedence --------------------
 
     @Test
@@ -77,6 +113,42 @@ class ParserTest {
         assertEquals(BinaryOp.TIMES, e.op)
         val left = e.left as Binary
         assertEquals(BinaryOp.PLUS, left.op)
+    }
+
+    // -------------------- Power operator --------------------
+
+    @Test
+    fun `power binds tighter than multiplication`() {
+        // 2 * 3 ** 2  ==  2 * (3 ** 2)
+        val e = parseAssignmentValue("2 * 3 ** 2") as Binary
+        assertEquals(BinaryOp.TIMES, e.op)
+        val right = e.right as Binary
+        assertEquals(BinaryOp.POW, right.op)
+        assertEquals(3L, (right.left as NumberLit).value)
+        assertEquals(2L, (right.right as NumberLit).value)
+    }
+
+    @Test
+    fun `power is right-associative`() {
+        // 2 ** 3 ** 2  ==  2 ** (3 ** 2)
+        val e = parseAssignmentValue("2 ** 3 ** 2") as Binary
+        assertEquals(BinaryOp.POW, e.op)
+        assertEquals(2L, (e.left as NumberLit).value)
+        val right = e.right as Binary
+        assertEquals(BinaryOp.POW, right.op)
+        assertEquals(3L, (right.left as NumberLit).value)
+        assertEquals(2L, (right.right as NumberLit).value)
+    }
+
+    @Test
+    fun `power binds tighter than unary minus, Python-style`() {
+        // -2 ** 2  ==  -(2 ** 2)
+        val e = parseAssignmentValue("-2 ** 2") as Unary
+        assertEquals(UnaryOp.NEG, e.op)
+        val pow = e.operand as Binary
+        assertEquals(BinaryOp.POW, pow.op)
+        assertEquals(2L, (pow.left as NumberLit).value)
+        assertEquals(2L, (pow.right as NumberLit).value)
     }
 
     @Test

@@ -13,6 +13,7 @@ import io.github.lucasvallejoo.toylang.ast.NumberLit
 import io.github.lucasvallejoo.toylang.ast.Program
 import io.github.lucasvallejoo.toylang.ast.Return
 import io.github.lucasvallejoo.toylang.ast.Stmt
+import io.github.lucasvallejoo.toylang.ast.StringLit
 import io.github.lucasvallejoo.toylang.ast.Unary
 import io.github.lucasvallejoo.toylang.ast.UnaryOp
 import io.github.lucasvallejoo.toylang.ast.VarRef
@@ -48,6 +49,8 @@ import io.github.lucasvallejoo.toylang.lexer.TokenType.RETURN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.RPAREN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.SLASH
 import io.github.lucasvallejoo.toylang.lexer.TokenType.STAR
+import io.github.lucasvallejoo.toylang.lexer.TokenType.STAR_STAR
+import io.github.lucasvallejoo.toylang.lexer.TokenType.STRING
 import io.github.lucasvallejoo.toylang.lexer.TokenType.THEN
 import io.github.lucasvallejoo.toylang.lexer.TokenType.TRUE
 import io.github.lucasvallejoo.toylang.lexer.TokenType.WHILE
@@ -74,12 +77,16 @@ import io.github.lucasvallejoo.toylang.lexer.TokenType.WHILE
  * | 6     | `+` `-`                | left          |
  * | 7     | `*` `/` `%`            | left          |
  * | 8     | unary `-`              | right         |
- * | 9     | function call          | n/a           |
- * | 10    | literals, identifiers, grouping | n/a  |
+ * | 9     | `**`                   | right         |
+ * | 10    | function call          | n/a           |
+ * | 11    | literals, identifiers, grouping | n/a  |
  *
  * `not` is *lower* than comparison on purpose: `not a == b` means
  * `not (a == b)`, matching Python and Kotlin. Unary arithmetic `-` stays
- * tight so that `-2 * 3` is `(-2) * 3`.
+ * tight so that `-2 * 3` is `(-2) * 3`. `**` sits *tighter than* unary
+ * `-` so that `-2 ** 2` reads as `-(2 ** 2) = -4`, again matching
+ * Python; the operator is right-associative so `2 ** 3 ** 2` is
+ * `2 ** (3 ** 2) = 512`.
  *
  * ### Statement-level rules
  *
@@ -143,7 +150,7 @@ class Parser(private val tokens: List<Token>) {
             WHILE -> parseWhile()
             RETURN -> parseReturn()
             IDENTIFIER -> parseAssignmentOrExprStmt()
-            NUMBER, TRUE, FALSE, LPAREN, NOT, MINUS -> parseExprStmt()
+            NUMBER, STRING, TRUE, FALSE, LPAREN, NOT, MINUS -> parseExprStmt()
             else -> throw ParserException(
                 "Expected statement, found ${t.type}",
                 t.line,
@@ -304,7 +311,9 @@ class Parser(private val tokens: List<Token>) {
 
     /**
      * Unary arithmetic negation only. Right-associative via self-recursion
-     * so that `- - x` produces two nested unary nodes.
+     * so that `- - x` produces two nested unary nodes. Falls through to
+     * [parsePower], which is *tighter* than unary -- `-2 ** 2` therefore
+     * reads as `-(2 ** 2)`, the Python convention.
      */
     private fun parseUnary(): Expr {
         if (check(MINUS)) {
@@ -312,7 +321,26 @@ class Parser(private val tokens: List<Token>) {
             val operand = parseUnary()
             return Unary(UnaryOp.NEG, operand, op.line, op.column)
         }
-        return parseCall()
+        return parsePower()
+    }
+
+    /**
+     * Power (`**`). Right-associative, tighter than unary `-` on the
+     * **left** but loose enough on the **right** that `2 ** -3` parses
+     * as `2 ** (-3)`. This asymmetric rule is the Python convention: the
+     * left operand of `**` is taken from a tight context (no leading
+     * unary `-`, that would belong to an enclosing [parseUnary] frame),
+     * while the right operand re-enters [parseUnary] so leading sign
+     * flips are absorbed into the right side.
+     */
+    private fun parsePower(): Expr {
+        val left = parseCall()
+        if (check(STAR_STAR)) {
+            val opToken = advance()
+            val right = parseUnary()
+            return Binary(BinaryOp.POW, left, right, opToken.line, opToken.column)
+        }
+        return left
     }
 
     /**
@@ -347,6 +375,10 @@ class Parser(private val tokens: List<Token>) {
             NUMBER -> {
                 advance()
                 NumberLit(token.literal!!, token.line, token.column)
+            }
+            STRING -> {
+                advance()
+                StringLit(token.literal as String, token.line, token.column)
             }
             TRUE -> {
                 advance()
