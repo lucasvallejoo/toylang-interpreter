@@ -78,7 +78,7 @@ The AST is dumped (as s-expressions) to standard error before execution; standar
 │               ├── lexer/       # Lexer tests
 │               ├── parser/      # Parser tests
 │               └── runtime/     # Evaluator tests
-├── examples/                    # Runnable sample programs (every brief sample + a hello)
+├── examples/                    # Runnable Toylang programs (brief samples 1/3/6 + 3 demos + hello)
 ├── LICENSE
 └── README.md
 ```
@@ -401,7 +401,7 @@ Three suites cover all three implemented phases:
 
 - **`LexerTest`** exercises literals (the integer/double split, string escapes, unterminated strings, invalid escapes), identifiers, keywords, operators (single- and two-character forms, including `**`), comments, whitespace handling, error cases, and smoke tests against real programs from the brief.
 - **`ParserTest`** covers operator precedence at every level (arithmetic, comparison, logical, unary, power with its right-associativity and Python-style asymmetry around unary `-`), associativity, statement forms (assignment, if/else, while, return, function declaration, call, bare expression), string literals (concat, equality, expression-statement), error cases (missing `then`, missing `else`, unclosed parens, nested functions, chained assignment), and the three brief samples that most stress the grammar.
-- **`EvaluatorTest`** covers arithmetic (integer vs. float promotion, division truncation, modulo, operator precedence, integer and Double power), boolean logic (short-circuit, strict type checks), control flow (if/else, while, nested loops), scoping (globals readable but not writable from functions), recursion, strings (concatenation, equality, cross-type comparisons, type errors, display vs. `asText` rendering), the `print` built-in (multi-arg, no-arg, mixed types, user-shadowing, integration with loops and functions), every documented runtime error case, and end-to-end execution of all six programs from the brief.
+- **`EvaluatorTest`** covers arithmetic (integer vs. float promotion, division truncation, modulo, operator precedence, integer and Double power), boolean logic (short-circuit, strict type checks), control flow (if/else, while, nested loops), scoping (globals readable but not writable from functions), recursion, strings (concatenation, equality, cross-type comparisons, type errors, display vs. `asText` rendering), the `print` built-in (multi-arg, no-arg, mixed types, user-shadowing, integration with loops and functions), every documented runtime error case, and end-to-end execution of the brief's three pinned-down samples (1, 3, 6) plus three additional demos for the language features they did not stress.
 
 ## Limitations and future work
 

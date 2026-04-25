@@ -283,10 +283,13 @@ class EvaluatorTest {
 
     @Test
     fun `recursive factorial matches sample 6`() {
+        // Same shape as the brief's sample 6 (`n <= 0` base case), exercised
+        // here as a unit test of the recursion mechanism. The end-to-end
+        // version is in the "Brief samples" block below.
         val env = run(
             """
             fun fact_rec(n) {
-              if n == 1 then return 1 else return n * fact_rec(n - 1)
+              if n <= 0 then return 1 else return n * fact_rec(n - 1)
             }
             y = fact_rec(5)
             """.trimIndent()
@@ -513,21 +516,58 @@ class EvaluatorTest {
     }
 
     // -------------------- Brief samples (end-to-end) --------------------
+    //
+    // The three brief samples whose exact source is pinned down by the
+    // parser tests (LexerTest / ParserTest captured them verbatim from
+    // the original task description). The expected outputs below are
+    // the ones the brief lists.
 
     @Test
     fun `sample 1 - two assignments with a nested expression`() {
         val env = run(
             """
-            x = 1
-            y = 2 * (x + 5)
+            x = 2
+            y = (x + 2) * 2
             """.trimIndent()
         )
-        assertEquals(1L, longVar(env, "x"))
-        assertEquals(12L, longVar(env, "y"))
+        assertEquals(2L, longVar(env, "x"))
+        assertEquals(8L, longVar(env, "y"))
     }
 
     @Test
-    fun `sample 2 - simple arithmetic chain`() {
+    fun `sample 3 - while with nested if-else and trailing update`() {
+        val env = run(
+            """
+            x = 1
+            y = 0
+            while x < 3 do if x == 1 then y = 10 else y = y + 1, x = x + 1
+            """.trimIndent()
+        )
+        assertEquals(3L, longVar(env, "x"))
+        // Trace: x=1 -> y=10, x=2; x=2 -> y=11, x=3; x=3 (cond false, exit).
+        assertEquals(11L, longVar(env, "y"))
+    }
+
+    @Test
+    fun `sample 6 - recursive factorial`() {
+        val env = run(
+            """
+            fun fact_rec(n) { if n <= 0 then return 1 else return n * fact_rec(n - 1) }
+            r = fact_rec(5)
+            """.trimIndent()
+        )
+        assertEquals(120L, longVar(env, "r"))
+    }
+
+    // -------------------- Additional end-to-end demos --------------------
+    //
+    // Programs that exercise the language features the brief samples did
+    // not stress directly (a chain of dependent assignments, a top-level
+    // if/else, a two-parameter function call). They double as the source
+    // for examples/02, 04, 05.
+
+    @Test
+    fun `chained assignments evaluate dependent values left to right`() {
         val env = run(
             """
             a = 10
@@ -541,21 +581,7 @@ class EvaluatorTest {
     }
 
     @Test
-    fun `sample 3 - while with nested if-else and trailing update`() {
-        val env = run(
-            """
-            x = 0
-            y = 0
-            while x < 5 do if x == 1 then y = 10 else y = y + 1, x = x + 1
-            """.trimIndent()
-        )
-        assertEquals(5L, longVar(env, "x"))
-        // Trace: x=0 -> y=1; x=1 -> y=10; x=2 -> y=11; x=3 -> y=12; x=4 -> y=13.
-        assertEquals(13L, longVar(env, "y"))
-    }
-
-    @Test
-    fun `sample 4 - if-else without a loop`() {
+    fun `top-level if-else picks the right branch`() {
         val env = run(
             """
             x = 7
@@ -566,7 +592,7 @@ class EvaluatorTest {
     }
 
     @Test
-    fun `sample 5 - function with two parameters`() {
+    fun `two-argument function call returns the sum`() {
         val env = run(
             """
             fun add(a, b) { return a + b }
@@ -574,18 +600,5 @@ class EvaluatorTest {
             """.trimIndent()
         )
         assertEquals(7L, longVar(env, "r"))
-    }
-
-    @Test
-    fun `sample 6 - recursive factorial`() {
-        val env = run(
-            """
-            fun fact_rec(n) {
-              if n == 1 then return 1 else return n * fact_rec(n - 1)
-            }
-            y = fact_rec(6)
-            """.trimIndent()
-        )
-        assertEquals(720L, longVar(env, "y"))
     }
 }

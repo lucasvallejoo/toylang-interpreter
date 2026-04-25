@@ -1,7 +1,7 @@
 // Brief sample 6 - classic recursive factorial.
+// Base case is `n <= 0` (returns 1), so fact_rec(0) and fact_rec(1) both
+// terminate cleanly without bottoming out.
 // Expected output:
-//   y = 720
-fun fact_rec(n) {
-  if n == 1 then return 1 else return n * fact_rec(n - 1)
-}
-y = fact_rec(6)
+//   r = 120
+fun fact_rec(n) { if n <= 0 then return 1 else return n * fact_rec(n - 1) }
+r = fact_rec(5)

@@ -1,6 +1,6 @@
-// Brief sample 1 - an assignment that uses a parenthesised subexpression.
+// Brief sample 1 - a parenthesised subexpression scaled by a literal.
 // Expected output:
-//   x = 1
-//   y = 12
-x = 1
-y = 2 * (x + 5)
+//   x = 2
+//   y = 8
+x = 2
+y = (x + 2) * 2

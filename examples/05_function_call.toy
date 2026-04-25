@@ -1,4 +1,4 @@
-// Brief sample 5 - a two-parameter function and a call site.
+// Demo - a two-parameter function with a single call site.
 // Expected output:
 //   r = 7
 fun add(a, b) { return a + b }

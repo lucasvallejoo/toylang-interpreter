@@ -1,4 +1,4 @@
-// Brief sample 2 - a chain of assignments where each depends on the previous.
+// Demo - a chain of assignments where each value depends on the previous.
 // Expected output:
 //   a = 10
 //   b = 7
